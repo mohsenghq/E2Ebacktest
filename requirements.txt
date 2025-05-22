@@ -1,0 +1,12 @@
+quantstats==0.0.60
+polars>=0.20.0
+loguru>=0.7.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+numpy>=1.26.0
+nbformat>=4.2.0
+tqdm
+plotly
+pyarrow
+openpyxl
+stable-baselines3[extra]
