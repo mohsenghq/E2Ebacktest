@@ -17,11 +17,11 @@ class RandomForestStrategy(Strategy):
         self.model = None
         self.output_dir = output_dir
 
-    def train(self, data: pd.DataFrame):
+    def train(self, features: pd.DataFrame):
         logger.info(f"Training {self.name}")
-        # Use feature engineering system
-        features = feature_engineer.generate(data, features=["returns", "ma10", "ma30"])
         features = features.dropna()
+        features.drop(columns=["Date"], inplace=True, errors='ignore')
+        features.to_csv(f"features.csv", index=True)
         X = features.values
         y = (features["returns"] > 0).astype(int).values
         self.model = RandomForestClassifier(n_estimators=self.n_estimators, max_depth=self.max_depth)
@@ -29,16 +29,14 @@ class RandomForestStrategy(Strategy):
         os.makedirs(self.output_dir, exist_ok=True)
         joblib.dump(self.model, f"{self.output_dir}/model.pkl")
         logger.info(f"Model saved to {self.output_dir}/model.pkl")
-    
-    def generate_signals(self, data: pd.DataFrame):
+
+    def generate_signals(self, features: pd.DataFrame):
         if self.model is None:
             raise ValueError("Model not trained")
-        # Use feature engineering system
-        features = feature_engineer.generate(data, features=["returns", "ma10", "ma30"])
         features = features.fillna(0)
         X = features.values
         predictions = self.model.predict(X)
-        signals = pd.Series([-1 if x == 0 else 1 for x in predictions], index=data.index)
+        signals = pd.Series([-1 if x == 0 else 1 for x in predictions], index=features.index)
 
         prev = signals.shift(1, fill_value=0)
         long_entry = ((signals == 1) & (prev != 1)).astype(bool)
@@ -46,11 +44,11 @@ class RandomForestStrategy(Strategy):
         short_entry = ((signals == -1) & (prev != -1)).astype(bool)
         short_exit = ((signals != -1) & (prev == -1)).astype(bool)
 
-        # Ensure all outputs are Series with the same index as data
-        long_entry = pd.Series(long_entry.values, index=data.index)
-        long_exit = pd.Series(long_exit.values, index=data.index)
-        short_entry = pd.Series(short_entry.values, index=data.index)
-        short_exit = pd.Series(short_exit.values, index=data.index)
+        # Ensure all outputs are Series with the same index as features
+        long_entry = pd.Series(long_entry.values, index=features.index)
+        long_exit = pd.Series(long_exit.values, index=features.index)
+        short_entry = pd.Series(short_entry.values, index=features.index)
+        short_exit = pd.Series(short_exit.values, index=features.index)
 
         return {
             'long_entry': long_entry,

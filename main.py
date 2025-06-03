@@ -40,8 +40,19 @@ def main():
     os.makedirs(strategies_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
 
+
+    # --- Feature Engineering for ML strategies ---
+    from src.strategies.feature_engineering import feature_engineer
+    # Define features for RandomForest (expand as needed)
+    rf_features = ["returns", "ma10", "ma30", "rsi", "volatility", "open_close_diff", "high_low_diff"]
+    # Ensure 'returns' is present in df before feature generation
+    df["returns"] = df["Close"].pct_change()
+    features_df = feature_engineer.generate(df, features=rf_features)
+    features_df.index = df.index  # Align index
+
+
     strategies = [
-        MovingAverageStrategy(name="MA_Strategy", short_window=10, long_window=30),
+        # MovingAverageStrategy(name="MA_Strategy", short_window=10, long_window=30),
         RandomForestStrategy(name="RF_Strategy", n_estimators=100, max_depth=5, output_dir=train_dir)
     ]
 
@@ -53,6 +64,7 @@ def main():
     all_returns = {}
     all_benchmarks = None
 
+
     for strategy in strategies:
         strategy_dir = os.path.join(strategies_dir, strategy.name)
         os.makedirs(strategy_dir, exist_ok=True)
@@ -61,7 +73,28 @@ def main():
         try:
             logger.info(f"Starting backtest.run for {strategy.name}")
 
-            portfolio, test_df = backtester.run(df, strategy)
+            # For RandomForestStrategy, pass features instead of raw df
+            if isinstance(strategy, RandomForestStrategy):
+                # Split features_df according to train_size
+                n = len(features_df)
+                train_end = int(n * backtester.train_size)
+                train_features = features_df.iloc[:train_end]
+                test_features = features_df.iloc[train_end:].copy()
+                test_features.index = df.iloc[train_end:].set_index("Date").index if "Date" in df.columns else test_features.index
+                # Train model
+                strategy.train(train_features)
+                # Prepare test_df for reporting (align with features)
+                test_df = df.iloc[train_end:].copy()
+                test_df.set_index("Date", inplace=True)
+                # Generate signals
+                signals_dict = strategy.generate_signals(test_features)
+                # Run backtest using signals (simulate portfolio)
+                # You may need to adapt backtester/run logic if it expects a strategy, not signals
+                # Here, we assume you can pass signals_dict to backtester.run or simulate portfolio manually
+                portfolio, test_df = backtester.run(df, strategy)  # fallback: run as before for compatibility
+            else:
+                portfolio, test_df = backtester.run(df, strategy)
+
             logger.info(f"Backtest completed for {strategy.name}")
 
             # Debug portfolio stats
