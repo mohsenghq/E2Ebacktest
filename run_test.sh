@@ -1,0 +1,1 @@
+$env:PYTHONPATH = "."; pytest tests/ --maxfail=3 --disable-warnings -v
