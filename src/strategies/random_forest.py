@@ -5,7 +5,9 @@ from sklearn.ensemble import RandomForestClassifier
 import joblib
 import os
 from loguru import logger
+
 from .moving_average import Strategy
+from .feature_engineering import feature_engineer
 
 class RandomForestStrategy(Strategy):
     def __init__(self, name: str, n_estimators: int, max_depth: int, output_dir: str = "models"):
@@ -17,29 +19,24 @@ class RandomForestStrategy(Strategy):
 
     def train(self, data: pd.DataFrame):
         logger.info(f"Training {self.name}")
-        features = pd.DataFrame({
-            "returns": data["Close"].pct_change(),
-            "ma10": data["Close"].rolling(window=10, min_periods=1).mean(),
-            "ma30": data["Close"].rolling(window=30, min_periods=1).mean()
-        }).dropna()
-        X = features[["returns", "ma10", "ma30"]].values
+        # Use feature engineering system
+        features = feature_engineer.generate(data, features=["returns", "ma10", "ma30"])
+        features = features.dropna()
+        X = features.values
         y = (features["returns"] > 0).astype(int).values
         self.model = RandomForestClassifier(n_estimators=self.n_estimators, max_depth=self.max_depth)
         self.model.fit(X, y)
         os.makedirs(self.output_dir, exist_ok=True)
         joblib.dump(self.model, f"{self.output_dir}/model.pkl")
-        logger.info(f"Model saved to {self.output_dir}/model.pkl")    
+        logger.info(f"Model saved to {self.output_dir}/model.pkl")
     
     def generate_signals(self, data: pd.DataFrame):
         if self.model is None:
             raise ValueError("Model not trained")
-        features = pd.DataFrame(index=data.index)
-        features["returns"] = data["Close"].pct_change()
-        features["ma10"] = data["Close"].rolling(window=10, min_periods=1).mean()
-        features["ma30"] = data["Close"].rolling(window=30, min_periods=1).mean()
+        # Use feature engineering system
+        features = feature_engineer.generate(data, features=["returns", "ma10", "ma30"])
         features = features.fillna(0)
-        
-        X = features[["returns", "ma10", "ma30"]].values
+        X = features.values
         predictions = self.model.predict(X)
         signals = pd.Series([-1 if x == 0 else 1 for x in predictions], index=data.index)
 
