@@ -1,5 +1,5 @@
 from datetime import datetime
-import polars as pl
+import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import joblib
@@ -15,37 +15,45 @@ class RandomForestStrategy(Strategy):
         self.model = None
         self.output_dir = output_dir
 
-    def train(self, data: pl.DataFrame):
+    def train(self, data: pd.DataFrame):
         logger.info(f"Training {self.name}")
-        features = data.with_columns(
-            pl.col("Close").pct_change().alias("returns"),
-            pl.col("Close").rolling_mean(10).alias("ma10"),
-            pl.col("Close").rolling_mean(30).alias("ma30")
-        ).drop_nulls()
-        X = features.select(["returns", "ma10", "ma30"]).to_numpy()
-        y = (features["returns"] > 0).cast(int).to_numpy()
+        features = pd.DataFrame({
+            "returns": data["Close"].pct_change(),
+            "ma10": data["Close"].rolling(window=10, min_periods=1).mean(),
+            "ma30": data["Close"].rolling(window=30, min_periods=1).mean()
+        }).dropna()
+        X = features[["returns", "ma10", "ma30"]].values
+        y = (features["returns"] > 0).astype(int).values
         self.model = RandomForestClassifier(n_estimators=self.n_estimators, max_depth=self.max_depth)
         self.model.fit(X, y)
         os.makedirs(self.output_dir, exist_ok=True)
         joblib.dump(self.model, f"{self.output_dir}/model.pkl")
-        logger.info(f"Model saved to {self.output_dir}/model.pkl")
-
-    def generate_signals(self, data: pl.DataFrame):
+        logger.info(f"Model saved to {self.output_dir}/model.pkl")    
+    
+    def generate_signals(self, data: pd.DataFrame):
         if self.model is None:
             raise ValueError("Model not trained")
-        features = data.with_columns(
-            pl.col("Close").pct_change().alias("returns"),
-            pl.col("Close").rolling_mean(10).alias("ma10"),
-            pl.col("Close").rolling_mean(30).alias("ma30")
-        ).select(["returns", "ma10", "ma30"]).to_numpy()
-        predictions = self.model.predict(features)
-        signals = pl.Series([1 if x == 1 else -1 for x in predictions])
+        features = pd.DataFrame(index=data.index)
+        features["returns"] = data["Close"].pct_change()
+        features["ma10"] = data["Close"].rolling(window=10, min_periods=1).mean()
+        features["ma30"] = data["Close"].rolling(window=30, min_periods=1).mean()
+        features = features.fillna(0)
+        
+        X = features[["returns", "ma10", "ma30"]].values
+        predictions = self.model.predict(X)
+        signals = pd.Series([-1 if x == 0 else 1 for x in predictions], index=data.index)
 
         prev = signals.shift(1, fill_value=0)
-        long_entry = (signals == 1) & (prev != 1)
-        long_exit = (signals != 1) & (prev == 1)
-        short_entry = (signals == -1) & (prev != -1)
-        short_exit = (signals != -1) & (prev == -1)
+        long_entry = ((signals == 1) & (prev != 1)).astype(bool)
+        long_exit = ((signals != 1) & (prev == 1)).astype(bool)
+        short_entry = ((signals == -1) & (prev != -1)).astype(bool)
+        short_exit = ((signals != -1) & (prev == -1)).astype(bool)
+
+        # Ensure all outputs are Series with the same index as data
+        long_entry = pd.Series(long_entry.values, index=data.index)
+        long_exit = pd.Series(long_exit.values, index=data.index)
+        short_entry = pd.Series(short_entry.values, index=data.index)
+        short_exit = pd.Series(short_exit.values, index=data.index)
 
         return {
             'long_entry': long_entry,

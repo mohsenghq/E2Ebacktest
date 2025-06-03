@@ -1,5 +1,5 @@
 import os
-import polars as pl
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -85,6 +85,7 @@ def main():
 
         except Exception as e:
             logger.error(f"Error processing {strategy.name}: {e}")
+            raise
 
     # Add Buy and Hold to comparison
     if all_benchmarks is not None:

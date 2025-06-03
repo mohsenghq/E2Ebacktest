@@ -94,10 +94,27 @@ class Reporting:
             os.makedirs(output_dir, exist_ok=True)
             if trades_df is None or trades_df.empty:
                 logger.warning(f"No trades to save for {strategy_name}.")
-                return
+                return            
             output_file = os.path.join(output_dir, f"{strategy_name}_trades.xlsx")
+            trades_df = trades_df.rename(columns={'Entry Timestamp': 'Entry Time','Avg Entry Price': 'Entry Price', 'Exit Timestamp': 'Exit Time'})
+            columns_to_keep = self.get_columns_to_keep(trades_df)
+            trades_df = trades_df[columns_to_keep]
+            
+            # Convert timezone-aware datetime columns to timezone-naive
+            if 'Entry Time' in trades_df.columns:
+                trades_df['Entry Time'] = trades_df['Entry Time'].dt.tz_localize(None)
+            if 'Exit Time' in trades_df.columns:
+                trades_df['Exit Time'] = trades_df['Exit Time'].dt.tz_localize(None)
+                
             trades_df.to_excel(output_file, index=False)
             logger.info(f"Trades saved to {output_file}")
         except Exception as e:
             logger.error(f"Error saving trades to Excel: {e}")
             raise
+
+    def get_columns_to_keep(self, trades_df):
+        """
+        Get the columns to keep in the trades DataFrame.
+        """
+        good_columns = ['Entry Time', 'Size', 'Entry Price', 'Exit Time', 'PnL', 'Entry Fees', 'Exit Price', 'Return', 'Direction']
+        return [col for col in trades_df.columns if col in good_columns]
