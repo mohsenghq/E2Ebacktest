@@ -21,7 +21,6 @@ class RandomForestStrategy(Strategy):
         logger.info(f"Training {self.name}")
         features = features.dropna()
         features.drop(columns=["Date"], inplace=True, errors='ignore')
-        features.to_csv(f"features.csv", index=True)
         X = features.values
         y = (features["returns"] > 0).astype(int).values
         self.model = RandomForestClassifier(n_estimators=self.n_estimators, max_depth=self.max_depth)
