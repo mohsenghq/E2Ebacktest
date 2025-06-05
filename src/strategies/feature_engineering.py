@@ -128,8 +128,22 @@ def register_mas(feature_engineer, windows):
     for w in windows:
         feature_engineer.register(f"ma{w}", make_ma(w))
 
+# Add multiple lagged close price features
+
+def make_lag_feature(lag: int):
+    def lag_func(df: pd.DataFrame) -> pd.Series:
+        return df["Close"].shift(lag)
+    lag_func.__name__ = f"lag{lag}"
+    return lag_func
+
 # Instantiate and register default features
 feature_engineer = FeatureEngineer()
+
+# Register lag1 to lag100
+for i in range(1, 101):
+    feature_engineer.register(f"lag{i}", make_lag_feature(i))
+
+
 feature_engineer.register("returns", returns)
 feature_engineer.register("volatility", volatility)
 feature_engineer.register("rsi", rsi)
