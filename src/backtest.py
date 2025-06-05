@@ -42,13 +42,29 @@ class Backtester:
         short_exit = to_pd(signals_dict['short_exit'])
         raw_signal = to_pd(signals_dict['raw_signal'])
         logger.info(f"[DEBUG] test_df length: {len(test_df)}, raw_signal length: {len(raw_signal)}")
-        logger.info(f"[DEBUG] raw_signal value counts (pandas): {raw_signal.value_counts().to_dict() if hasattr(raw_signal, 'value_counts') else 'N/A'}")        # Ensure all inputs are pandas Series with the same index
+        logger.info(f"[DEBUG] raw_signal value counts (pandas): {raw_signal.value_counts().to_dict() if hasattr(raw_signal, 'value_counts') else 'N/A'}")
+        # Debug dtypes and shapes
+        # logger.info(f"long_entry dtype: {long_entry.dtype}, shape: {long_entry.shape}")
+        # logger.info(f"long_exit dtype: {long_exit.dtype}, shape: {long_exit.shape}")
+        # logger.info(f"short_entry dtype: {short_entry.dtype}, shape: {short_entry.shape}")
+        # logger.info(f"short_exit dtype: {short_exit.dtype}, shape: {short_exit.shape}")
+        # logger.info(f"raw_signal dtype: {raw_signal.dtype}, shape: {raw_signal.shape}")
+        # Fill NaNs with False for boolean signals
+        long_entry = long_entry.fillna(False)
+        long_exit = long_exit.fillna(False)
+        short_entry = short_entry.fillna(False)
+        short_exit = short_exit.fillna(False)
+        # Ensure all inputs are pandas Series with the same index
         close = test_df["Close"]
         long_entry = pd.Series(long_entry, index=close.index)
         long_exit = pd.Series(long_exit, index=close.index)
         short_entry = pd.Series(short_entry, index=close.index)
         short_exit = pd.Series(short_exit, index=close.index)
-
+        # Convert to numpy arrays of correct type
+        long_entry = np.asarray(long_entry, dtype=bool)
+        long_exit = np.asarray(long_exit, dtype=bool)
+        short_entry = np.asarray(short_entry, dtype=bool)
+        short_exit = np.asarray(short_exit, dtype=bool)
         portfolio = vbt.Portfolio.from_signals(
             close=close,
             entries=long_entry,
