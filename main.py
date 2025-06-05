@@ -9,6 +9,7 @@ from src.backtest import Backtester
 from src.data_loader import DataLoader
 from src.strategies.moving_average import MovingAverageStrategy
 from src.strategies.random_forest import RandomForestStrategy
+from src.strategies.xgboost_strategy import XGBoostStrategy
 from src.reporting import Reporting
 
 # Configure logger
@@ -45,7 +46,7 @@ def main():
         # --- Feature Engineering for ML strategies ---
         from src.strategies.feature_engineering import feature_engineer
         # Define features for RandomForest (expand as needed)
-        rf_features = ["returns", "ma10", "ma30", "rsi", "volatility", "open_close_diff", "high_low_diff"]
+        rf_features = ["returns", "ma10", "ma30", "rsi", "volatility", "open_close_diff", "high_low_diff", "macd", "bband_upper", "bband_lower", "stocastic_k", "cci", "atr", "ema20", "lag1", "rolling_mean10", "rolling_std10", "ewm_mean10", "day_of_week", "month", "quarter", "is_holiday", "open_close_diff", "high_low_diff"]# + [f"lag{i}" for i in range(1, 101)]
         # Ensure 'returns' is present in df before feature generation
         df["returns"] = df["Close"].pct_change()
         features_df = feature_engineer.generate(df, features=rf_features)
@@ -53,7 +54,8 @@ def main():
 
         strategies = [
             MovingAverageStrategy(name="MA_Strategy", short_window=10, long_window=30),
-            RandomForestStrategy(name="RF_Strategy", n_estimators=100, max_depth=5, output_dir=train_dir)
+            RandomForestStrategy(name="RF_Strategy", n_estimators=100, max_depth=5, output_dir=train_dir),
+            XGBoostStrategy(name="XGB_Strategy", n_estimators=100, max_depth=5, output_dir=os.path.join(train_dir, "xgboost"))
         ]
 
         # Set up single log file for the entire run (inside run_dir/logs)
