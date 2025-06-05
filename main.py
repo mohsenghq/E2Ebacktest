@@ -21,6 +21,8 @@ def main():
     data_path = "data/BTCUSD_Candlestick_1_D_BID_03.08.2022-03.08.2024.csv"
     run_dir = None
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = None
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     try:
         df = data_loader.load_csv(data_path)
         logger.info(f"Loaded data from {data_path}")
@@ -44,6 +46,7 @@ def main():
         # Ensure 'returns' is present in df before feature generation
         df["returns"] = df["Close"].pct_change()
         features_df = feature_engineer.generate(df, features=rf_features)
+        features_df.index = df.index
         features_df.index = df.index
         strategies = [
             MovingAverageStrategy(name="MA_Strategy", short_window=10, long_window=30),
@@ -83,6 +86,7 @@ def main():
                     test_df.set_index("Date", inplace=True)
                     signals_dict = strategy.generate_signals(test_features)
                     portfolio, test_df = backtester.run(df, strategy)
+                    portfolio, test_df = backtester.run(df, strategy)
                 else:
                     portfolio, test_df = backtester.run(df, strategy)
 
@@ -113,6 +117,16 @@ def main():
                 logger.error(f"Error generating multi-strategy report: {e}")
     except Exception as e:
         logger.error(f"Fatal error in main run: {e}")
+        # raise
+    # finally:
+    #     if run_dir and os.path.exists(run_dir):
+    #         try:
+    #             from loguru import logger as loguru_logger
+    #             loguru_logger.remove()  # Remove all handlers to close log files
+    #             shutil.rmtree(run_dir)
+    #             print(f"Deleted run directory due to error: {run_dir}")
+    #         except Exception as cleanup_error:
+    #             print(f"Failed to delete run directory: {cleanup_error}")
         # raise
     # finally:
     #     if run_dir and os.path.exists(run_dir):
