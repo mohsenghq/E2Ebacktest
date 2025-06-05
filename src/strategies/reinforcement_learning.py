@@ -6,8 +6,8 @@ import gymnasium as gym
 from gymnasium import spaces
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
 from .moving_average import Strategy
-from .feature_engineering import feature_engineer
 from collections import deque
 
 def calculate_sharpe_ratio(returns, risk_free_rate=0.0):
@@ -99,115 +99,70 @@ class TradingEnv(gym.Env):
         
     def _simple_reward(self, price_change: float) -> float:
         """Simple reward based on price change and position"""
-        reward = price_change * self.position - 0.0001  # Include transaction cost
-        # Reward for switching position
-        if self.position != self.prev_position:
-            reward += 0.01
-        # Penalty for holding same non-flat position
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-        
+        return self.position * price_change
+
     def _sharpe_reward(self, price_change: float) -> float:
         """Reward based on Sharpe ratio"""
         self.returns_history.append(price_change * self.position)
-        reward = calculate_sharpe_ratio(np.array(self.returns_history))
-        if self.position != self.prev_position:
-            reward += 0.01
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-        
+        return calculate_sharpe_ratio(np.array(self.returns_history))
+
     def _sortino_reward(self, price_change: float) -> float:
         """Reward based on Sortino ratio"""
         self.returns_history.append(price_change * self.position)
-        reward = calculate_sortino_ratio(np.array(self.returns_history))
-        if self.position != self.prev_position:
-            reward += 0.01
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-        
+        return calculate_sortino_ratio(np.array(self.returns_history))
+
     def _calmar_reward(self, price_change: float) -> float:
         """Reward based on Calmar ratio"""
         self.returns_history.append(price_change * self.position)
-        reward = calculate_calmar_ratio(np.array(self.returns_history))
-        if self.position != self.prev_position:
-            reward += 0.01
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-        
+        return calculate_calmar_ratio(np.array(self.returns_history))
+
     def _asymmetric_reward(self, price_change: float) -> float:
-        """Asymmetric reward that penalizes losses more than gains"""
-        ret = price_change * self.position
-        if ret < 0:
-            reward = ret * 2  # Double penalty for losses
-        else:
-            reward = ret
-        if self.position != self.prev_position:
-            reward += 0.01
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-        
+        """Asymmetric reward function that penalizes losses more than rewards gains"""
+        position_return = self.position * price_change
+        return np.sign(position_return) * (abs(position_return) ** 0.5)
+
     def _risk_adjusted_reward(self, price_change: float) -> float:
-        """Combination of returns and risk metrics"""
+        """Combination of simple return and risk metrics"""
         self.returns_history.append(price_change * self.position)
-        returns = np.array(self.returns_history)
+        simple_reward = self._simple_reward(price_change)
+        sharpe = calculate_sharpe_ratio(np.array(self.returns_history))
+        sortino = calculate_sortino_ratio(np.array(self.returns_history))
         
-        # Combine multiple risk metrics
-        sharpe = calculate_sharpe_ratio(returns)
-        sortino = calculate_sortino_ratio(returns)
-        
-        # Current return plus risk-adjusted component
-        reward = price_change * self.position + 0.1 * (sharpe + sortino) / 2
-        if self.position != self.prev_position:
-            reward += 0.01
-        if self.position == self.prev_position and self.position != 0:
-            reward -= 0.01
-        return reward
-    
+        return simple_reward * (1 + 0.1 * (sharpe + sortino))
+
     def step(self, action):
-        # Current price and next price for calculating returns
-        current_price = self.data.iloc[self.current_step]['Close']
-        # Save previous position
-        self.prev_position = self.position
-        # Execute trade according to action
-        if action == 0:  # Buy
-            if self.position != 1:  # If not already long
-                self.position = 1
-        elif action == 1:  # Sell
-            if self.position != -1:  # If not already short
-                self.position = -1
-        # No hold action
-        
-        # Move to next time step
-        self.current_step += 1
-        
-        # Calculate reward
         if self.current_step >= len(self.data) - 1:
             self.done = True
-            reward = 0
-        else:
-            next_price = self.data.iloc[self.current_step]['Close']
-            price_change = (next_price - current_price) / current_price
-            reward = self.reward_functions[self.reward_function](price_change)
-        
-        truncated = False  # For gymnasium compatibility
+            truncated = True
+            return self._next_observation(), 0, self.done, truncated, {}
+
+        current_price = self.data.iloc[self.current_step]['Close']
+        next_price = self.data.iloc[self.current_step + 1]['Close']
+        price_change = (next_price - current_price) / current_price
+
+        # Update position based on action (0 = buy/long, 1 = sell/short)
+        self.prev_position = self.position
+        self.position = 1 if action == 0 else -1
+
+        # Calculate reward based on selected reward function
+        reward = self.reward_functions[self.reward_function](price_change)
+
         info = {
-            'current_price': current_price,
             'position': self.position,
-            'balance': self.balance
+            'current_price': current_price,
+            'price_change': price_change,
+            'reward': reward
         }
         
+        self.current_step += 1
+        truncated = False
+
         return self._next_observation(), reward, self.done, truncated, info
 
     def render(self, mode='human'):
         pass
 
 class RLStrategy(Strategy):    
-    
     def __init__(self, name: str, output_dir: str = "models", model_type: str = "PPO",
                  reward_function: str = "risk_adjusted", window_size: int = 20):
         super().__init__(name, model_type=model_type, output_dir=output_dir)
@@ -216,20 +171,17 @@ class RLStrategy(Strategy):
         self.model_type = model_type
         self.reward_function = reward_function
         self.window_size = window_size
-        self.features = [
-            "returns", "ma10", "ma30", "rsi", "volatility", 
-            "macd", "bband_upper", "bband_lower", "cci", "atr",
-            "open_close_diff", "high_low_diff", "stocastic_k",
-            "ewm_mean10", "rolling_std10"
-        ] + [f"lag{i}" for i in range(1, 101)]
 
-    def train(self, data: pd.DataFrame):
+    def train(self, features: pd.DataFrame):
         logger.info(f"Training {self.name}")
-        features_df = feature_engineer.generate(data, features=self.features)
-        features_df = features_df.fillna(0)
-        env = TradingEnv(data, features_df, reward_function=self.reward_function,
+        features = features.fillna(0)
+          # Create environment for training
+        base_env = TradingEnv(features, features, reward_function=self.reward_function,
                         window_size=self.window_size)
-        env = DummyVecEnv([lambda: env])
+        # Wrap with Monitor first
+        monitored_env = Monitor(base_env, os.path.join(self.output_dir, 'training_logs'))
+        env = DummyVecEnv([lambda: monitored_env])
+        
         # Select RL algorithm
         if self.model_type.upper() == "PPO":
             RLModel = PPO
@@ -269,11 +221,14 @@ class RLStrategy(Strategy):
             )
         else:
             raise ValueError(f"Unsupported RL model_type: {self.model_type}")
+            
         self.model = RLModel('MlpPolicy', env, **model_kwargs)
-        from stable_baselines3.common.callbacks import EvalCallback
-        eval_env = DummyVecEnv([lambda: TradingEnv(data, features_df, 
-                                                  reward_function=self.reward_function,
-                                                  window_size=self.window_size)])
+        from stable_baselines3.common.callbacks import EvalCallback        # Create and wrap evaluation environment
+        eval_base_env = TradingEnv(features, features,
+                                reward_function=self.reward_function,
+                                window_size=self.window_size)
+        eval_monitored_env = Monitor(eval_base_env, os.path.join(self.output_dir, 'eval_logs'))
+        eval_env = DummyVecEnv([lambda: eval_monitored_env])
         eval_callback = EvalCallback(eval_env, 
                                    best_model_save_path=self.output_dir,
                                    log_path=self.output_dir, 
@@ -296,11 +251,11 @@ class RLStrategy(Strategy):
         if self.model is None:
             raise ValueError("Model not trained")
             
-        # Generate features for testing data
-        features_df = feature_engineer.generate(features, features=self.features)
-        features_df = features_df.fillna(0)
-          # Create environment for prediction
-        env = TradingEnv(features, features_df, reward_function=self.reward_function,
+        # Use passed features directly
+        features = features.fillna(0)
+        
+        # Create environment for prediction
+        env = TradingEnv(features, features, reward_function=self.reward_function,
                         window_size=self.window_size)
         
         signals = []
@@ -322,25 +277,17 @@ class RLStrategy(Strategy):
         signals = pd.Series(signals, index=features.index[:len(signals)])
         # Debug: print agent outputs
         logger.info(f"[RL DEBUG] signals value counts: {signals.value_counts().to_dict()}")
+        
         # Generate entry/exit signals with enhanced logic
         prev = signals.shift(1, fill_value=0)
-        # Save signals and prev to a text file for debugging
-        # debug_df = pd.DataFrame({'signals': signals, 'prev': prev})
-        # debug_df.to_csv('signals_debug.txt', sep='\t', index=True)
         
         long_entry = ((signals == 1) & (prev != 1)).astype(bool)
         long_exit = ((signals != 1) & (prev == 1)).astype(bool)
         short_entry = ((signals == -1) & (prev != -1)).astype(bool)
         short_exit = ((signals != -1) & (prev == -1)).astype(bool)
-        
-        # Comment out the holding period filter for now
-        # min_holding_period = 2  # minimum number of periods to hold a position
-        # for i in range(min_holding_period):
-        #     long_entry = long_entry & ~long_entry.shift(i, fill_value=False)
-        #     short_entry = short_entry & ~short_entry.shift(i, fill_value=False)
-        # Debug: print entry/exit signal sums
+                
         logger.info(f"[RL DEBUG] long_entry sum: {long_entry.sum()}, long_exit sum: {long_exit.sum()}, short_entry sum: {short_entry.sum()}, short_exit sum: {short_exit.sum()}")
-        # Ensure all outputs are of precise type (not object)
+        
         return {
             'long_entry': long_entry.astype(bool),
             'long_exit': long_exit.astype(bool),

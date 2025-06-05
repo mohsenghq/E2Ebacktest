@@ -8,6 +8,7 @@ from src.data_loader import DataLoader
 from src.strategies.moving_average import MovingAverageStrategy
 from src.strategies.random_forest import RandomForestStrategy
 from src.strategies.xgboost_strategy import XGBoostStrategy
+from src.strategies.reinforcement_learning import RLStrategy
 from src.reporting import Reporting
 from src.logger import setup_logger
 
@@ -42,16 +43,17 @@ def process_single_file(data_path, base_run_dir, backtester, timestamp):
                       "bband_upper", "bband_lower", "stocastic_k", "cci", "atr", "ema20", "lag1", "rolling_mean10", 
                       "rolling_std10", "ewm_mean10", "day_of_week", "month", "quarter", "is_holiday", 
                       "open_close_diff", "high_low_diff"] + [f"lag{i}" for i in range(1, 101)]
-        
         df["returns"] = df["Close"].pct_change()
         features_df = feature_engineer.generate(df, features=rf_features)
         features_df.index = df.index
+        features_df["Close"] = df["Close"]  # Add Close column to features
 
         strategies = [
             MovingAverageStrategy(name="MA_Strategy", short_window=10, long_window=30),
             RandomForestStrategy(name="RF_Strategy", n_estimators=100, max_depth=5, output_dir=train_dir),
             XGBoostStrategy(name="XGB_Strategy", n_estimators=100, max_depth=5, 
-                          output_dir=os.path.join(train_dir, "xgboost"))
+                          output_dir=os.path.join(train_dir, "xgboost")),
+            RLStrategy(name="PPO_risk", output_dir=os.path.join(train_dir, "reinforcement_learning"), model_type="PPO")
         ]
 
         # Set up log file for this specific data file
@@ -62,18 +64,20 @@ def process_single_file(data_path, base_run_dir, backtester, timestamp):
         all_returns = {}
         all_benchmarks = None
 
+        n = len(features_df)
+        train_end = int(n * backtester.train_size)
+        train_features = features_df.iloc[:train_end]
+        test_features = features_df.iloc[train_end:].copy()
+        test_features.index = df.iloc[train_end:].set_index("Date").index if "Date" in df.columns else test_features.index
+
         for strategy in strategies:
             strategy_dir = os.path.join(strategies_dir, strategy.name)
             os.makedirs(strategy_dir, exist_ok=True)
 
             logger.info(f"Running backtest for {strategy.name} on {file_name}")
             try:
-                if isinstance(strategy, RandomForestStrategy):
-                    n = len(features_df)
-                    train_end = int(n * backtester.train_size)
-                    train_features = features_df.iloc[:train_end]
-                    test_features = features_df.iloc[train_end:].copy()
-                    test_features.index = df.iloc[train_end:].set_index("Date").index if "Date" in df.columns else test_features.index
+                # Check if strategy has a train method
+                if hasattr(strategy, 'train'):
                     strategy.train(train_features)
                     test_df = df.iloc[train_end:].copy()
                     test_df.set_index("Date", inplace=True)

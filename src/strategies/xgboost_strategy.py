@@ -6,7 +6,6 @@ import os
 from loguru import logger
 
 from .moving_average import Strategy
-from .feature_engineering import feature_engineer
 
 class XGBoostStrategy(Strategy):
     def __init__(self, name: str, n_estimators: int = 100, max_depth: int = 5, output_dir: str = "models"):
@@ -19,9 +18,12 @@ class XGBoostStrategy(Strategy):
     def train(self, features: pd.DataFrame):
         logger.info(f"Training {self.name}")
         features = features.dropna()
-        features.drop(columns=["Date"], inplace=True, errors='ignore')
-        X = features.values
+        
+        # Save just the model parameters
+        self.feature_columns = [col for col in features.columns if col != "Date" and col != "returns"]
+        X = features[self.feature_columns].values
         y = (features["returns"] > 0).astype(int).values
+        
         self.model = XGBClassifier(n_estimators=self.n_estimators, max_depth=self.max_depth, use_label_encoder=False, eval_metric='logloss')
         self.model.fit(X, y)
         os.makedirs(self.output_dir, exist_ok=True)
@@ -31,8 +33,9 @@ class XGBoostStrategy(Strategy):
     def generate_signals(self, features: pd.DataFrame):
         if self.model is None:
             raise ValueError("Model not trained")
+            
         features = features.fillna(0)
-        X = features.values
+        X = features[self.feature_columns].values
         predictions = self.model.predict(X)
         signals = pd.Series([-1 if x == 0 else 1 for x in predictions], index=features.index)
 
@@ -54,4 +57,4 @@ class XGBoostStrategy(Strategy):
             'short_entry': short_entry,
             'short_exit': short_exit,
             'raw_signal': signals
-        } 
+        }
