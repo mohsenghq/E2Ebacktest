@@ -6,7 +6,7 @@ class DataLoader:
     def load_csv(self, file_path: str) -> pd.DataFrame:
         try:
             df = pd.read_csv(file_path)
-            required_columns = ['Date','Open','High','Low','Close','Volume']
+            required_columns = ['Date','Open','High','Low','Close']
             if not all(col in df.columns for col in required_columns):
                 raise ValueError("CSV missing required OHLCV columns")
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")

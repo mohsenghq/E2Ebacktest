@@ -2,6 +2,7 @@ import quantstats as qs
 from loguru import logger
 import pandas as pd
 import os
+import numpy as np
 
 class Reporting:
     def _make_compare_df(self, returns_dict):
@@ -117,4 +118,129 @@ class Reporting:
         Get the columns to keep in the trades DataFrame.
         """
         good_columns = ['Entry Time', 'Size', 'Entry Price', 'Exit Time', 'PnL', 'Entry Fees', 'Exit Price', 'Return', 'Direction']
-        return [col for col in trades_df.columns if col in good_columns]
+        return [col for col in trades_df.columns if col in good_columns]    
+    
+    def save_summary_report(self, all_returns: dict, output_dir: str):
+        """
+        Generate summary Excel file and bar chart comparing strategy performance across files.
+        :param all_returns: dict of {file_name: {strategy_name: returns_series}}
+        :param output_dir: Directory to save the summary reports
+        """
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Create summary dataframe
+            summary_data = []
+            for file_name, returns_dict in all_returns.items():
+                file_metrics = {'File': file_name}
+                for strategy_name, returns in returns_dict.items():
+                    if returns is not None and len(returns) > 0:
+                        # Calculate key metrics
+                        total_return = (1 + returns).cumprod().iloc[-1] - 1
+                        sharpe = np.sqrt(252) * returns.mean() / returns.std() if returns.std() != 0 else 0
+                        # Calculate max drawdown
+                        cum_returns = (1 + returns).cumprod()
+                        max_drawdown = (cum_returns / cum_returns.cummax() - 1).min()
+                        # Calculate win rate and sortino ratio
+                        win_rate = len(returns[returns > 0]) / len(returns) if len(returns) > 0 else 0
+                        neg_returns = returns[returns < 0]
+                        sortino = np.sqrt(252) * returns.mean() / neg_returns.std() if len(neg_returns) > 0 and neg_returns.std() != 0 else 0
+                          # Store only Return and WinRate metrics
+                        file_metrics[f'{strategy_name}_Return'] = total_return
+                        file_metrics[f'{strategy_name}_WinRate'] = win_rate
+                summary_data.append(file_metrics)
+            summary_df = pd.DataFrame(summary_data)
+            
+            # Save to Excel with formatting
+            excel_path = os.path.join(output_dir, "strategy_summary.xlsx")
+            with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+                summary_df.to_excel(writer, sheet_name='Performance Summary', index=False)
+                workbook = writer.book
+                worksheet = writer.sheets['Performance Summary']
+                
+                # Add formatting
+                percent_format = workbook.add_format({'num_format': '0.00%'})
+                decimal_format = workbook.add_format({'num_format': '0.00'})
+                
+                # Apply formatting to columns
+                for col_idx, col in enumerate(summary_df.columns):
+                    if '_Return' in col or '_MaxDD' in col or '_WinRate' in col:
+                        worksheet.set_column(col_idx+1, col_idx+1, 12, percent_format)
+                    elif '_Sharpe' in col or '_Sortino' in col:
+                        worksheet.set_column(col_idx+1, col_idx+1, 12, decimal_format)
+                
+                # Adjust first column width for file names
+                worksheet.set_column(0, 0, 20)
+                logger.info(f"Summary Excel report saved to {excel_path}")
+            
+            # Create visualizations
+            try:
+                import matplotlib.pyplot as plt
+                import seaborn as sns
+                  # Set style to a default nice looking style
+                plt.style.use('default')
+                
+                # 1. Returns Comparison Plot
+                plt.figure(figsize=(15, 8))
+                  # Get strategy names and clean them for lookup
+                strategy_names = []
+                for col in summary_df.columns:
+                    if '_Return' in col:
+                        # Get everything before _Return
+                        strategy_name = col.split('_Return')[0]
+                        strategy_names.append(strategy_name)
+                strategy_names = list(set(strategy_names))  # Remove duplicates
+                
+                # Set up bar positions
+                num_strategies = len(strategy_names)
+                bar_width = 0.8 / num_strategies
+                file_positions = np.arange(len(summary_df['File']))
+                  # Plot bars for each strategy with enhanced styling
+                for i, strategy in enumerate(strategy_names):
+                    col_name = f'{strategy}_Return'
+                    if col_name in summary_df.columns:
+                        returns = summary_df[col_name]
+                        position = file_positions + i * bar_width - (num_strategies-1) * bar_width/2
+                        plt.bar(position, returns*100, width=bar_width, label=strategy, alpha=0.8)
+                
+                plt.xlabel('Instruments', fontsize=12)
+                plt.ylabel('Total Return (%)', fontsize=12)
+                plt.title('Strategy Performance Comparison', fontsize=14, pad=20)
+                plt.xticks(file_positions, summary_df['File'], rotation=45, ha='right')
+                plt.legend(title='Strategies', title_fontsize=12, fontsize=10)
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                  # Save returns comparison plot
+                returns_plot_path = os.path.join(output_dir, "returns_comparison.png")
+                plt.savefig(returns_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                  # Create Win Rate comparison plot
+                plt.figure(figsize=(15, 8))
+                for i, strategy in enumerate(strategy_names):
+                    col_name = f'{strategy}_WinRate'
+                    if col_name in summary_df.columns:
+                        win_rates = summary_df[col_name]
+                        position = file_positions + i * bar_width - (num_strategies-1) * bar_width/2
+                        plt.bar(position, win_rates*100, width=bar_width, label=strategy, alpha=0.8)
+                
+                plt.xlabel('Instruments', fontsize=12)
+                plt.ylabel('Win Rate (%)', fontsize=12)
+                plt.title('Strategy Win Rate Comparison', fontsize=14, pad=20)
+                plt.xticks(file_positions, summary_df['File'], rotation=45, ha='right')
+                plt.legend(title='Strategies', title_fontsize=12, fontsize=10)
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                
+                # Save win rate comparison plot
+                winrate_plot_path = os.path.join(output_dir, "winrate_comparison.png")
+                plt.savefig(winrate_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                
+                logger.info(f"Performance visualizations saved to {output_dir}")
+                
+            except Exception as e:
+                logger.error(f"Error creating performance visualizations: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error generating summary report: {e}")
+            raise
